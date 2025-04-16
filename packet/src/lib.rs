@@ -52,10 +52,8 @@ bitflags! {
         const FORWARDED      = 0b0000_0010;
         const REPAIR         = 0b0000_0100;
         const SIMPLE_VOTE_TX = 0b0000_1000;
-        // Previously used - this can now be re-used for something else.
-        const UNUSED_0  = 0b0001_0000;
-        // Previously used - this can now be re-used for something else.
-        const UNUSED_1 = 0b0010_0000;
+        const P3  = 0b0001_0000;
+        const MEV = 0b0010_0000;
         /// For tracking performance
         const PERF_TRACK_PACKET  = 0b0100_0000;
         /// For marking packets from staked nodes
@@ -277,6 +275,16 @@ impl Meta {
     }
 
     #[inline]
+    pub fn set_p3(&mut self, is_p3: bool) {
+        self.flags.set(PacketFlags::P3, is_p3);
+    }
+
+    #[inline]
+    pub fn set_mev(&mut self, is_mev: bool) {
+        self.flags.set(PacketFlags::MEV, is_mev);
+    }
+
+    #[inline]
     pub fn forwarded(&self) -> bool {
         self.flags.contains(PacketFlags::FORWARDED)
     }
@@ -289,6 +297,16 @@ impl Meta {
     #[inline]
     pub fn is_simple_vote_tx(&self) -> bool {
         self.flags.contains(PacketFlags::SIMPLE_VOTE_TX)
+    }
+
+    #[inline]
+    pub fn is_p3(&self) -> bool {
+        self.flags.contains(PacketFlags::P3)
+    }
+
+    #[inline]
+    pub fn is_mev(&self) -> bool {
+        self.flags.contains(PacketFlags::MEV)
     }
 
     #[inline]
