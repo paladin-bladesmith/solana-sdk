@@ -6,14 +6,15 @@
 use core::convert::TryInto;
 use core::{
     fmt,
-    str::{from_utf8, FromStr},
+    str::{from_utf8_unchecked, FromStr},
 };
 #[cfg(feature = "alloc")]
 extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
+use core::error::Error;
 #[cfg(feature = "std")]
-use std::{error::Error, vec::Vec};
+use std::vec::Vec;
 #[cfg(feature = "serde")]
 use {
     serde_big_array::BigArray,
@@ -30,6 +31,10 @@ const MAX_BASE58_SIGNATURE_LEN: usize = 88;
 #[repr(transparent)]
 #[cfg_attr(feature = "frozen-abi", derive(solana_frozen_abi_macro::AbiExample))]
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(
+    feature = "bytemuck",
+    derive(bytemuck_derive::Pod, bytemuck_derive::Zeroable)
+)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Signature(
     #[cfg_attr(feature = "serde", serde(with = "BigArray"))] [u8; SIGNATURE_BYTES],
@@ -65,7 +70,7 @@ impl Signature {
         pubkey_bytes: &[u8],
         message_bytes: &[u8],
     ) -> Result<(), ed25519_dalek::SignatureError> {
-        let publickey = ed25519_dalek::PublicKey::from_bytes(pubkey_bytes)?;
+        let publickey = ed25519_dalek::VerifyingKey::try_from(pubkey_bytes)?;
         let signature = self.0.as_slice().try_into()?;
         publickey.verify_strict(message_bytes, &signature)
     }
@@ -83,11 +88,9 @@ impl AsRef<[u8]> for Signature {
 
 fn write_as_base58(f: &mut fmt::Formatter, s: &Signature) -> fmt::Result {
     let mut out = [0u8; MAX_BASE58_SIGNATURE_LEN];
-    let out_slice: &mut [u8] = &mut out;
-    // This will never fail because the only possible error is BufferTooSmall,
-    // and we will never call it with too small a buffer.
-    let len = bs58::encode(s.0).onto(out_slice).unwrap();
-    let as_str = from_utf8(&out[..len]).unwrap();
+    let len = five8::encode_64(&s.0, &mut out) as usize;
+    // any sequence of base58 chars is valid utf8
+    let as_str = unsafe { from_utf8_unchecked(&out[..len]) };
     f.write_str(as_str)
 }
 
@@ -141,7 +144,6 @@ pub enum ParseSignatureError {
     Invalid,
 }
 
-#[cfg(feature = "std")]
 impl Error for ParseSignatureError {}
 
 impl fmt::Display for ParseSignatureError {
@@ -159,18 +161,19 @@ impl FromStr for Signature {
     type Err = ParseSignatureError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use five8::DecodeError;
         if s.len() > MAX_BASE58_SIGNATURE_LEN {
             return Err(ParseSignatureError::WrongSize);
         }
         let mut bytes = [0; SIGNATURE_BYTES];
-        let decoded_size = bs58::decode(s)
-            .onto(&mut bytes)
-            .map_err(|_| ParseSignatureError::Invalid)?;
-        if decoded_size != SIGNATURE_BYTES {
-            Err(ParseSignatureError::WrongSize)
-        } else {
-            Ok(bytes.into())
-        }
+        five8::decode_64(s, &mut bytes).map_err(|e| match e {
+            DecodeError::InvalidChar(_) => ParseSignatureError::Invalid,
+            DecodeError::TooLong
+            | DecodeError::TooShort
+            | DecodeError::LargestTermTooHigh
+            | DecodeError::OutputTooLong => ParseSignatureError::WrongSize,
+        })?;
+        Ok(Self::from(bytes))
     }
 }
 

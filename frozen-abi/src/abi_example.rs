@@ -19,7 +19,7 @@ use {
 //
 // The requirement of AbiExample impls even applies to those types of `#[serde(skip)]`-ed fields.
 // That's because the abi digesting needs a properly initialized object to enter into the
-// serde::serialize() to begin with, even knowning they aren't used for serialization and thus abi
+// serde::serialize() to begin with, even knowing they aren't used for serialization and thus abi
 // digest. Luckily, `#[serde(skip)]`-ed fields' AbiExample impls can just delegate to T::default(),
 // exploiting the nature of this artificial impl requirement as an exception from the usual
 // AbiExample semantics.
@@ -576,10 +576,7 @@ impl<T: Serialize + TransparentAsHelper + EvenAsOpaque> AbiEnumVisitor for &T {
     default fn visit_for_abi(&self, digester: &mut AbiDigester) -> DigestResult {
         let type_name = type_name::<T>();
         let matcher = T::TYPE_NAME_MATCHER;
-        info!(
-            "AbiEnumVisitor for (EvenAsOpaque): {}: matcher: {}",
-            type_name, matcher
-        );
+        info!("AbiEnumVisitor for (EvenAsOpaque): {type_name}: matcher: {matcher}");
         self.serialize(digester.create_new_opaque(matcher))
             .map_err(DigestError::wrap_by_type::<T>)
     }
@@ -617,5 +614,30 @@ impl<O: AbiEnumVisitor, E: AbiEnumVisitor> AbiEnumVisitor for Result<O, E> {
 impl<T: AbiExample> AbiExample for std::sync::OnceLock<T> {
     fn example() -> Self {
         Self::from(T::example())
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+impl<
+        T: std::cmp::Eq + std::hash::Hash + AbiExample,
+        S: AbiExample,
+        H: std::hash::BuildHasher + Default + std::clone::Clone,
+    > AbiExample for dashmap::DashMap<T, S, H>
+{
+    fn example() -> Self {
+        info!("AbiExample for (DashMap<T, S, H>): {}", type_name::<Self>());
+        let map = dashmap::DashMap::default();
+        map.insert(T::example(), S::example());
+        map
+    }
+}
+
+#[cfg(not(target_os = "solana"))]
+impl<T: AbiExample> AbiExample for boxcar::Vec<T> {
+    fn example() -> Self {
+        info!("AbiExample for (boxcar::Vec): {}", type_name::<Self>());
+        let vec = boxcar::Vec::new();
+        vec.push(T::example());
+        vec
     }
 }

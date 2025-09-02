@@ -2,12 +2,15 @@
 name = "solana-serde"
 description = "Solana serde helpers"
 documentation = "https://docs.rs/solana-serde"
-version = "2.2.1"
+version = "3.0.0"
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 serde = { workspace = true }
@@ -15,6 +18,3 @@ serde = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true }
 serde_derive = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

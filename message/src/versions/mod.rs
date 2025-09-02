@@ -38,7 +38,7 @@ pub const MESSAGE_VERSION_PREFIX: u8 = 0x80;
 /// format.
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "2RTtea34NPrb8p9mWHCWjFh76cwP3MbjSmeoj5CXEBwN"),
+    frozen_abi(digest = "Hndd1SDxQ5qNZvzHo77dpW6uD5c1DJNVjtg8tE6hc432"),
     derive(AbiEnumVisitor, AbiExample)
 )]
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -95,11 +95,6 @@ impl VersionedMessage {
             Self::Legacy(message) => message.is_maybe_writable(index, reserved_account_keys),
             Self::V0(message) => message.is_maybe_writable(index, reserved_account_keys),
         }
-    }
-
-    #[deprecated(since = "2.0.0", note = "Please use `is_instruction_account` instead")]
-    pub fn is_key_passed_to_program(&self, key_index: usize) -> bool {
-        self.is_instruction_account(key_index)
     }
 
     /// Returns true if the account at the specified index is an input to some

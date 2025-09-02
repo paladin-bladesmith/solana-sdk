@@ -2,11 +2,6 @@
 
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
-#[deprecated(
-    since = "2.2.0",
-    note = "Use `solana_cluster_type::ClusterType` instead."
-)]
-pub use solana_cluster_type::ClusterType;
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{frozen_abi, AbiExample};
 #[cfg(feature = "serde")]
@@ -15,7 +10,6 @@ use {
     chrono::{TimeZone, Utc},
     memmap2::Mmap,
     solana_hash::Hash,
-    solana_native_token::lamports_to_sol,
     solana_sha256_hasher::hash,
     solana_shred_version::compute_shred_version,
     std::{
@@ -28,6 +22,7 @@ use {
 use {
     solana_account::{Account, AccountSharedData},
     solana_clock::{UnixTimestamp, DEFAULT_TICKS_PER_SLOT},
+    solana_cluster_type::ClusterType,
     solana_epoch_schedule::EpochSchedule,
     solana_fee_calculator::FeeRateGovernor,
     solana_inflation::Inflation,
@@ -54,7 +49,7 @@ pub const UNUSED_DEFAULT: u64 = 1024;
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "D9VFRSj4fodCuKFC9omQY2zY2Uw8wo6SzJFLeMJaVigm")
+    frozen_abi(digest = "3tUUJkZiUUGfuNCXbDuDR6KCQYPsh3m3cPw5vVUSt113")
 )]
 #[cfg_attr(
     feature = "serde",
@@ -236,7 +231,7 @@ impl fmt::Display for GenesisConfig {
              {:?}\n\
              {:?}\n\
              {:?}\n\
-             Capitalization: {} SOL in {} accounts\n\
+             Capitalization: {} lamports in {} accounts\n\
              Native instruction processors: {:#?}\n\
              Rewards pool: {:#?}\n\
              ",
@@ -259,15 +254,13 @@ impl fmt::Display for GenesisConfig {
             self.inflation,
             self.rent,
             self.fee_rate_governor,
-            lamports_to_sol(
-                self.accounts
-                    .iter()
-                    .map(|(pubkey, account)| {
-                        assert!(account.lamports > 0, "{:?}", (pubkey, account));
-                        account.lamports
-                    })
-                    .sum::<u64>()
-            ),
+            self.accounts
+                .iter()
+                .map(|(pubkey, account)| {
+                    assert!(account.lamports > 0, "{:?}", (pubkey, account));
+                    account.lamports
+                })
+                .sum::<u64>(),
             self.accounts.len(),
             self.native_instruction_processors,
             self.rewards_pools,

@@ -1,10 +1,8 @@
 //! Concrete implementation of a Solana `Signer` from raw bytes
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 use {
     ed25519_dalek::Signer as DalekSigner,
-    rand0_7::{rngs::OsRng, CryptoRng, RngCore},
+    rand::rngs::OsRng,
     solana_pubkey::Pubkey,
     solana_seed_phrase::generate_seed_from_seed_phrase_and_passphrase,
     solana_signature::{error::Error as SignatureError, Signature},
@@ -21,9 +19,8 @@ pub mod seed_derivable;
 pub mod signable;
 
 /// A vanilla Ed25519 key pair
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Debug)]
-pub struct Keypair(ed25519_dalek::Keypair);
+pub struct Keypair(ed25519_dalek::SigningKey);
 
 pub const KEYPAIR_LENGTH: usize = 64;
 
@@ -31,52 +28,40 @@ impl Keypair {
     /// Can be used for generating a Keypair without a dependency on `rand` types
     pub const SECRET_KEY_LENGTH: usize = 32;
 
-    /// Constructs a new, random `Keypair` using a caller-provided RNG
-    pub fn generate<R>(csprng: &mut R) -> Self
-    where
-        R: CryptoRng + RngCore,
-    {
-        Self(ed25519_dalek::Keypair::generate(csprng))
-    }
-
     /// Constructs a new, random `Keypair` using `OsRng`
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let mut rng = OsRng;
-        Self::generate(&mut rng)
+        Self(ed25519_dalek::SigningKey::generate(&mut rng))
     }
 
-    /// Recovers a `Keypair` from a byte array
-    #[deprecated(since = "2.2.2", note = "Use Keypair::try_from(&[u8]) instead")]
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, ed25519_dalek::SignatureError> {
-        Self::try_from(bytes).map_err(ed25519_dalek::SignatureError::from_source)
+    /// Constructs a new `Keypair` using secret key bytes
+    pub fn new_from_array(secret_key: [u8; 32]) -> Self {
+        Self(ed25519_dalek::SigningKey::from(secret_key))
     }
 
     /// Returns this `Keypair` as a byte array
     pub fn to_bytes(&self) -> [u8; KEYPAIR_LENGTH] {
-        self.0.to_bytes()
+        self.0.to_keypair_bytes()
     }
 
     /// Recovers a `Keypair` from a base58-encoded string
     pub fn from_base58_string(s: &str) -> Self {
         let mut buf = [0u8; ed25519_dalek::KEYPAIR_LENGTH];
-        bs58::decode(s).onto(&mut buf).unwrap();
+        five8::decode_64(s, &mut buf).unwrap();
         Self::try_from(&buf[..]).unwrap()
     }
 
     /// Returns this `Keypair` as a base58-encoded string
     pub fn to_base58_string(&self) -> String {
-        bs58::encode(&self.0.to_bytes()).into_string()
-    }
-
-    /// Gets this `Keypair`'s SecretKey
-    #[deprecated(since = "2.2.2", note = "Use secret_bytes()")]
-    pub fn secret(&self) -> &ed25519_dalek::SecretKey {
-        &self.0.secret
+        let mut out = [0u8; five8::BASE58_ENCODED_64_MAX_LEN];
+        let len = five8::encode_64(&self.to_bytes(), &mut out);
+        unsafe { String::from_utf8_unchecked(out[..len as usize].to_vec()) }
     }
 
     /// Gets this `Keypair`'s secret key bytes
     pub fn secret_bytes(&self) -> &[u8; Self::SECRET_KEY_LENGTH] {
-        self.0.secret.as_bytes()
+        self.0.as_bytes()
     }
 
     /// Allows Keypair cloning
@@ -87,11 +72,7 @@ impl Keypair {
     /// Only use this in tests or when strictly required. Consider using [`std::sync::Arc<Keypair>`]
     /// instead.
     pub fn insecure_clone(&self) -> Self {
-        Self(ed25519_dalek::Keypair {
-            // This will never error since self is a valid keypair
-            secret: ed25519_dalek::SecretKey::from_bytes(self.0.secret.as_bytes()).unwrap(),
-            public: self.0.public,
-        })
+        Self(self.0.clone())
     }
 }
 
@@ -99,60 +80,19 @@ impl TryFrom<&[u8]> for Keypair {
     type Error = SignatureError;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        if bytes.len() < ed25519_dalek::KEYPAIR_LENGTH {
-            return Err(SignatureError::from_source(String::from(
-                "candidate keypair byte array is too short",
-            )));
-        }
-        let secret =
-            ed25519_dalek::SecretKey::from_bytes(&bytes[..ed25519_dalek::SECRET_KEY_LENGTH])
-                .map_err(SignatureError::from_source)?;
-        let public =
-            ed25519_dalek::PublicKey::from_bytes(&bytes[ed25519_dalek::SECRET_KEY_LENGTH..])
-                .map_err(SignatureError::from_source)?;
-        let expected_public = ed25519_dalek::PublicKey::from(&secret);
-        (public == expected_public)
-            .then_some(Self(ed25519_dalek::Keypair { secret, public }))
-            .ok_or(SignatureError::from_source(String::from(
-                "keypair bytes do not specify same pubkey as derived from their secret key",
-            )))
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[allow(non_snake_case)]
-#[wasm_bindgen]
-impl Keypair {
-    /// Create a new `Keypair `
-    #[wasm_bindgen(constructor)]
-    pub fn constructor() -> Keypair {
-        Keypair::new()
-    }
-
-    /// Convert a `Keypair` to a `Uint8Array`
-    pub fn toBytes(&self) -> Box<[u8]> {
-        self.to_bytes().into()
-    }
-
-    /// Recover a `Keypair` from a `Uint8Array`
-    pub fn fromBytes(bytes: &[u8]) -> Result<Keypair, JsValue> {
-        Keypair::try_from(bytes).map_err(|e| e.to_string().into())
-    }
-
-    /// Return the `Pubkey` for this `Keypair`
-    #[wasm_bindgen(js_name = pubkey)]
-    pub fn js_pubkey(&self) -> Pubkey {
-        // `wasm_bindgen` does not support traits (`Signer) yet
-        self.pubkey()
-    }
-}
-
-// This should also be marked deprecated, but it's not possible to put a
-// `#[deprecated]` attribute on a trait implementation.
-// Remove during the next major version bump.
-impl From<ed25519_dalek::Keypair> for Keypair {
-    fn from(value: ed25519_dalek::Keypair) -> Self {
-        Self(value)
+        let keypair_bytes: &[u8; ed25519_dalek::KEYPAIR_LENGTH] =
+            bytes.try_into().map_err(|_| {
+                SignatureError::from_source(String::from(
+                    "candidate keypair byte array is the wrong length",
+                ))
+            })?;
+        ed25519_dalek::SigningKey::from_keypair_bytes(keypair_bytes)
+            .map_err(|_| {
+                SignatureError::from_source(String::from(
+                    "keypair bytes do not specify same pubkey as derived from their secret key",
+                ))
+            })
+            .map(Self)
     }
 }
 
@@ -162,7 +102,7 @@ static_assertions::const_assert_eq!(Keypair::SECRET_KEY_LENGTH, ed25519_dalek::S
 impl Signer for Keypair {
     #[inline]
     fn pubkey(&self) -> Pubkey {
-        Pubkey::from(self.0.public.to_bytes())
+        Pubkey::from(self.0.verifying_key().to_bytes())
     }
 
     fn try_pubkey(&self) -> Result<Pubkey, SignerError> {
@@ -258,7 +198,7 @@ pub fn write_keypair<W: Write>(
     keypair: &Keypair,
     writer: &mut W,
 ) -> Result<String, Box<dyn error::Error>> {
-    let keypair_bytes = keypair.0.to_bytes();
+    let keypair_bytes = keypair.to_bytes();
     let mut result = Vec::with_capacity(64 * 4 + 2); // Estimate capacity: 64 numbers * (up to 3 digits + 1 comma) + 2 brackets
 
     result.push(b'['); // Opening bracket
@@ -292,17 +232,15 @@ pub fn keypair_from_seed(seed: &[u8]) -> Result<Keypair, Box<dyn error::Error>> 
     if seed.len() < ed25519_dalek::SECRET_KEY_LENGTH {
         return Err("Seed is too short".into());
     }
-    let secret = ed25519_dalek::SecretKey::from_bytes(&seed[..ed25519_dalek::SECRET_KEY_LENGTH])
-        .map_err(|e| e.to_string())?;
-    let public = ed25519_dalek::PublicKey::from(&secret);
-    let dalek_keypair = ed25519_dalek::Keypair { secret, public };
-    Ok(Keypair(dalek_keypair))
+    // this won't fail as we've already checked the length
+    let secret_key = ed25519_dalek::SecretKey::try_from(&seed[..ed25519_dalek::SECRET_KEY_LENGTH])?;
+    Ok(Keypair(ed25519_dalek::SigningKey::from(secret_key)))
 }
 
 pub fn keypair_from_seed_phrase_and_passphrase(
     seed_phrase: &str,
     passphrase: &str,
-) -> Result<Keypair, Box<dyn std::error::Error>> {
+) -> Result<Keypair, Box<dyn core::error::Error>> {
     keypair_from_seed(&generate_seed_from_seed_phrase_and_passphrase(
         seed_phrase,
         passphrase,
@@ -337,7 +275,7 @@ mod tests {
         assert!(Path::new(&outfile).exists());
         assert_eq!(
             keypair_vec,
-            read_keypair_file(&outfile).unwrap().0.to_bytes().to_vec()
+            read_keypair_file(&outfile).unwrap().to_bytes().to_vec()
         );
 
         #[cfg(unix)]
@@ -475,5 +413,13 @@ mod tests {
         let keypair =
             keypair_from_seed_phrase_and_passphrase(mnemonic.phrase(), passphrase).unwrap();
         assert_eq!(keypair.pubkey(), expected_keypair.pubkey());
+    }
+
+    #[test]
+    fn test_base58() {
+        let keypair = keypair_from_seed(&[0u8; 32]).unwrap();
+        let as_base58 = keypair.to_base58_string();
+        let parsed = Keypair::from_base58_string(&as_base58);
+        assert_eq!(keypair, parsed);
     }
 }

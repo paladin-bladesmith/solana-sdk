@@ -11,104 +11,22 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
-#[allow(deprecated)]
-pub use builtins::{BUILTIN_PROGRAMS_KEYS, MAYBE_BUILTIN_KEY_OR_SYSVAR};
 #[cfg(feature = "serde")]
 use serde_derive::{Deserialize, Serialize};
 #[cfg(feature = "frozen-abi")]
 use solana_frozen_abi_macro::{frozen_abi, AbiExample};
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::wasm_bindgen;
 use {
     crate::{
-        compiled_instruction::CompiledInstruction, compiled_keys::CompiledKeys, MessageHeader,
+        compiled_instruction::CompiledInstruction, compiled_keys::CompiledKeys,
+        inline_nonce::advance_nonce_account_instruction, MessageHeader,
     },
     solana_hash::Hash,
     solana_instruction::Instruction,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk_ids::{
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, system_program, sysvar,
-    },
-    std::{collections::HashSet, convert::TryFrom, str::FromStr},
+    solana_sdk_ids::bpf_loader_upgradeable,
+    std::{collections::HashSet, convert::TryFrom},
 };
-
-// copied from deprecated code in solana_program::sysvar to avoid a dependency.
-// This should be removed when the items that depend on it are removed.
-lazy_static::lazy_static! {
-    // This will be deprecated and so this list shouldn't be modified
-    static ref ALL_IDS: Vec<Pubkey> = vec![
-        sysvar::clock::id(),
-        sysvar::epoch_schedule::id(),
-        sysvar::fees::id(),
-        sysvar::recent_blockhashes::id(),
-        sysvar::rent::id(),
-        sysvar::rewards::id(),
-        sysvar::slot_hashes::id(),
-        sysvar::slot_history::id(),
-        sysvar::stake_history::id(),
-        sysvar::instructions::id(),
-    ];
-}
-
-// copied from deprecated code in solana_program::sysvar to avoid a dependency.
-// This should be removed when the items that depend on it are removed.
-fn is_sysvar_id(id: &Pubkey) -> bool {
-    ALL_IDS.iter().any(|key| key == id)
-}
-
-#[deprecated(
-    since = "2.0.0",
-    note = "please use `solana_sdk::reserved_account_keys::ReservedAccountKeys` instead"
-)]
-#[allow(deprecated)]
-mod builtins {
-    use {super::*, lazy_static::lazy_static};
-
-    lazy_static! {
-        pub static ref BUILTIN_PROGRAMS_KEYS: [Pubkey; 10] = {
-            let parse = |s| Pubkey::from_str(s).unwrap();
-            [
-                parse("Config1111111111111111111111111111111111111"),
-                parse("Feature111111111111111111111111111111111111"),
-                parse("NativeLoader1111111111111111111111111111111"),
-                parse("Stake11111111111111111111111111111111111111"),
-                parse("StakeConfig11111111111111111111111111111111"),
-                parse("Vote111111111111111111111111111111111111111"),
-                system_program::id(),
-                bpf_loader::id(),
-                bpf_loader_deprecated::id(),
-                bpf_loader_upgradeable::id(),
-            ]
-        };
-    }
-
-    lazy_static! {
-        // Each element of a key is a u8. We use key[0] as an index into this table of 256 boolean
-        // elements, to store whether or not the first element of any key is present in the static
-        // lists of built-in-program keys or system ids. By using this lookup table, we can very
-        // quickly determine that a key under consideration cannot be in either of these lists (if
-        // the value is "false"), or might be in one of these lists (if the value is "true")
-        pub static ref MAYBE_BUILTIN_KEY_OR_SYSVAR: [bool; 256] = {
-            let mut temp_table: [bool; 256] = [false; 256];
-            BUILTIN_PROGRAMS_KEYS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
-            ALL_IDS.iter().for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
-            temp_table
-        };
-    }
-}
-
-#[deprecated(
-    since = "2.0.0",
-    note = "please use `solana_sdk::reserved_account_keys::ReservedAccountKeys::is_reserved` instead"
-)]
-#[allow(deprecated)]
-pub fn is_builtin_key_or_sysvar(key: &Pubkey) -> bool {
-    if MAYBE_BUILTIN_KEY_OR_SYSVAR[key.as_ref()[0] as usize] {
-        return is_sysvar_id(key) || BUILTIN_PROGRAMS_KEYS.contains(key);
-    }
-    false
-}
 
 fn position(keys: &[Pubkey], key: &Pubkey) -> u8 {
     keys.iter().position(|k| k == key).unwrap() as u8
@@ -146,10 +64,9 @@ fn compile_instructions(ixs: &[Instruction], keys: &[Pubkey]) -> Vec<CompiledIns
 /// redundantly specifying the fee-payer is not strictly required.
 // NOTE: Serialization-related changes must be paired with the custom serialization
 // for versioned messages in the `RemainingLegacyMessage` struct.
-#[cfg(not(target_arch = "wasm32"))]
 #[cfg_attr(
     feature = "frozen-abi",
-    frozen_abi(digest = "2THeaWnXSGDTsiadKytJTcbjrk4KjfMww9arRLZcwGnw"),
+    frozen_abi(digest = "GXpvLNiMCnjnZpQEDKpc2NBpsqmRnAX7ZTCy9JmvG8Dg"),
     derive(AbiExample)
 )]
 #[cfg_attr(
@@ -172,38 +89,6 @@ pub struct Message {
 
     /// Programs that will be executed in sequence and committed in one atomic transaction if all
     /// succeed.
-    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
-    pub instructions: Vec<CompiledInstruction>,
-}
-
-/// wasm-bindgen version of the Message struct.
-/// This duplication is required until https://github.com/rustwasm/wasm-bindgen/issues/3671
-/// is fixed. This must not diverge from the regular non-wasm Message struct.
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-#[cfg_attr(
-    feature = "frozen-abi",
-    frozen_abi(digest = "2THeaWnXSGDTsiadKytJTcbjrk4KjfMww9arRLZcwGnw"),
-    derive(AbiExample)
-)]
-#[cfg_attr(
-    feature = "serde",
-    derive(Deserialize, Serialize),
-    serde(rename_all = "camelCase")
-)]
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
-pub struct Message {
-    #[wasm_bindgen(skip)]
-    pub header: MessageHeader,
-
-    #[wasm_bindgen(skip)]
-    #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
-    pub account_keys: Vec<Pubkey>,
-
-    /// The id of a recent ledger entry.
-    pub recent_blockhash: Hash,
-
-    #[wasm_bindgen(skip)]
     #[cfg_attr(feature = "serde", serde(with = "solana_short_vec"))]
     pub instructions: Vec<CompiledInstruction>,
 }
@@ -256,18 +141,17 @@ impl Message {
     /// [`anyhow`]: https://docs.rs/anyhow
     ///
     /// ```
-    /// # use solana_program::example_mocks::solana_sdk;
-    /// # use solana_program::example_mocks::solana_rpc_client;
+    /// # use solana_example_mocks::{solana_keypair, solana_signer, solana_transaction};
+    /// # use solana_example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
     /// use solana_instruction::Instruction;
+    /// use solana_keypair::Keypair;
     /// use solana_message::Message;
     /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
-    /// use solana_sdk::{
-    ///     signature::{Keypair, Signer},
-    ///     transaction::Transaction,
-    /// };
+    /// use solana_signer::Signer;
+    /// use solana_transaction::Transaction;
     ///
     /// // A custom program instruction. This would typically be defined in
     /// // another crate so it can be shared between the on-chain program and
@@ -328,18 +212,17 @@ impl Message {
     /// [`anyhow`]: https://docs.rs/anyhow
     ///
     /// ```
-    /// # use solana_program::example_mocks::solana_sdk;
-    /// # use solana_program::example_mocks::solana_rpc_client;
+    /// # use solana_example_mocks::{solana_keypair, solana_signer, solana_transaction};
+    /// # use solana_example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
     /// use solana_instruction::Instruction;
+    /// use solana_keypair::Keypair;
     /// use solana_message::Message;
     /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
-    /// use solana_sdk::{
-    ///     signature::{Keypair, Signer},
-    ///     transaction::Transaction,
-    /// };
+    /// use solana_signer::Signer;
+    /// use solana_transaction::Transaction;
     ///
     /// // A custom program instruction. This would typically be defined in
     /// // another crate so it can be shared between the on-chain program and
@@ -425,19 +308,18 @@ impl Message {
     /// [`anyhow`]: https://docs.rs/anyhow
     ///
     /// ```
-    /// # use solana_program::example_mocks::solana_sdk;
-    /// # use solana_program::example_mocks::solana_rpc_client;
+    /// # use solana_example_mocks::{solana_keypair, solana_signer, solana_transaction};
+    /// # use solana_example_mocks::solana_rpc_client;
     /// use anyhow::Result;
     /// use borsh::{BorshSerialize, BorshDeserialize};
     /// use solana_hash::Hash;
     /// use solana_instruction::Instruction;
+    /// use solana_keypair::Keypair;
     /// use solana_message::Message;
     /// use solana_pubkey::Pubkey;
     /// use solana_rpc_client::rpc_client::RpcClient;
-    /// use solana_sdk::{
-    ///     signature::{Keypair, Signer},
-    ///     transaction::Transaction,
-    /// };
+    /// use solana_signer::Signer;
+    /// use solana_transaction::Transaction;
     /// use solana_system_interface::instruction::create_nonce_account;
     ///
     /// // A custom program instruction. This would typically be defined in
@@ -514,17 +396,14 @@ impl Message {
     /// # create_offline_initialize_tx(&client, program_id, &payer)?;
     /// # Ok::<(), anyhow::Error>(())
     /// ```
-    #[cfg(feature = "bincode")]
     pub fn new_with_nonce(
         mut instructions: Vec<Instruction>,
         payer: Option<&Pubkey>,
         nonce_account_pubkey: &Pubkey,
         nonce_authority_pubkey: &Pubkey,
     ) -> Self {
-        let nonce_ix = solana_system_interface::instruction::advance_nonce_account(
-            nonce_account_pubkey,
-            nonce_authority_pubkey,
-        );
+        let nonce_ix =
+            advance_nonce_account_instruction(nonce_account_pubkey, nonce_authority_pubkey);
         instructions.insert(0, nonce_ix);
         Self::new(&instructions, payer)
     }
@@ -593,11 +472,6 @@ impl Message {
             .collect()
     }
 
-    #[deprecated(since = "2.0.0", note = "Please use `is_instruction_account` instead")]
-    pub fn is_key_passed_to_program(&self, key_index: usize) -> bool {
-        self.is_instruction_account(key_index)
-    }
-
     /// Returns true if the account at the specified index is an account input
     /// to some program instruction in this message.
     pub fn is_instruction_account(&self, key_index: usize) -> bool {
@@ -620,14 +494,6 @@ impl Message {
         }
     }
 
-    #[deprecated(
-        since = "2.0.0",
-        note = "Please use `is_key_called_as_program` and `is_instruction_account` directly"
-    )]
-    pub fn is_non_loader_key(&self, key_index: usize) -> bool {
-        !self.is_key_called_as_program(key_index) || self.is_instruction_account(key_index)
-    }
-
     pub fn program_position(&self, index: usize) -> Option<usize> {
         let program_ids = self.program_ids();
         program_ids
@@ -646,23 +512,13 @@ impl Message {
     /// Returns true if the account at the specified index was requested to be
     /// writable. This method should not be used directly.
     pub(super) fn is_writable_index(&self, i: usize) -> bool {
-        i < (self.header.num_required_signatures - self.header.num_readonly_signed_accounts)
-            as usize
+        i < (self.header.num_required_signatures as usize)
+            .saturating_sub(self.header.num_readonly_signed_accounts as usize)
             || (i >= self.header.num_required_signatures as usize
-                && i < self.account_keys.len()
-                    - self.header.num_readonly_unsigned_accounts as usize)
-    }
-
-    /// Returns true if the account at the specified index is writable by the
-    /// instructions in this message. Since the dynamic set of reserved accounts
-    /// isn't used here to demote write locks, this shouldn't be used in the
-    /// runtime.
-    #[deprecated(since = "2.0.0", note = "Please use `is_maybe_writable` instead")]
-    #[allow(deprecated)]
-    pub fn is_writable(&self, i: usize) -> bool {
-        (self.is_writable_index(i))
-            && !is_builtin_key_or_sysvar(&self.account_keys[i])
-            && !self.demote_program_id(i)
+                && i < self
+                    .account_keys
+                    .len()
+                    .saturating_sub(self.header.num_readonly_unsigned_accounts as usize))
     }
 
     /// Returns true if the account at the specified index is writable by the
@@ -734,32 +590,12 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    #![allow(deprecated)]
     use {
-        super::*, crate::MESSAGE_HEADER_LENGTH, solana_instruction::AccountMeta,
-        solana_sha256_hasher::hash, std::collections::HashSet,
+        super::*,
+        crate::MESSAGE_HEADER_LENGTH,
+        solana_instruction::AccountMeta,
+        std::{collections::HashSet, str::FromStr},
     };
-
-    #[test]
-    fn test_builtin_program_keys() {
-        let keys: HashSet<Pubkey> = BUILTIN_PROGRAMS_KEYS.iter().copied().collect();
-        assert_eq!(keys.len(), 10);
-        for k in keys {
-            let k = format!("{k}");
-            assert!(k.ends_with("11111111111111111111111"));
-        }
-    }
-
-    #[test]
-    fn test_builtin_program_keys_abi_freeze() {
-        // Once the feature is flipped on, we can't further modify
-        // BUILTIN_PROGRAMS_KEYS without the risk of breaking consensus.
-        let builtins = format!("{:?}", *BUILTIN_PROGRAMS_KEYS);
-        assert_eq!(
-            format!("{}", hash(builtins.as_bytes())),
-            "ACqmMkYbo9eqK6QrRSrB3HLyR6uHhLf31SCfGUAJjiWj"
-        );
-    }
 
     #[test]
     // Ensure there's a way to calculate the number of required signatures.
@@ -841,33 +677,6 @@ mod tests {
         assert_eq!(message.program_position(0), None);
         assert_eq!(message.program_position(1), Some(0));
         assert_eq!(message.program_position(2), Some(1));
-    }
-
-    #[test]
-    fn test_is_writable() {
-        let key0 = Pubkey::new_unique();
-        let key1 = Pubkey::new_unique();
-        let key2 = Pubkey::new_unique();
-        let key3 = Pubkey::new_unique();
-        let key4 = Pubkey::new_unique();
-        let key5 = Pubkey::new_unique();
-
-        let message = Message {
-            header: MessageHeader {
-                num_required_signatures: 3,
-                num_readonly_signed_accounts: 2,
-                num_readonly_unsigned_accounts: 1,
-            },
-            account_keys: vec![key0, key1, key2, key3, key4, key5],
-            recent_blockhash: Hash::default(),
-            instructions: vec![],
-        };
-        assert!(message.is_writable(0));
-        assert!(!message.is_writable(1));
-        assert!(!message.is_writable(2));
-        assert!(message.is_writable(3));
-        assert!(message.is_writable(4));
-        assert!(!message.is_writable(5));
     }
 
     #[test]
@@ -960,26 +769,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_non_loader_key() {
-        #![allow(deprecated)]
-        let key0 = Pubkey::new_unique();
-        let key1 = Pubkey::new_unique();
-        let loader2 = Pubkey::new_unique();
-        let instructions = vec![CompiledInstruction::new(2, &(), vec![0, 1])];
-        let message = Message::new_with_compiled_instructions(
-            1,
-            0,
-            2,
-            vec![key0, key1, loader2],
-            Hash::default(),
-            instructions,
-        );
-        assert!(message.is_non_loader_key(0));
-        assert!(message.is_non_loader_key(1));
-        assert!(!message.is_non_loader_key(2));
-    }
-
-    #[test]
     fn test_message_header_len_constant() {
         assert_eq!(
             bincode::serialized_size(&MessageHeader::default()).unwrap() as usize,
@@ -1020,7 +809,79 @@ mod tests {
     }
 
     #[test]
-    fn test_inline_all_ids() {
-        assert_eq!(solana_sysvar::ALL_IDS.to_vec(), ALL_IDS.to_vec());
+    fn test_is_writable_index_saturating_behavior() {
+        // Directly matching issue #150 PoC 1:
+        // num_readonly_signed_accounts > num_required_signatures
+        // This now results in the first part of the OR condition in is_writable_index effectively becoming `i < 0`.
+        let key0 = Pubkey::new_unique();
+        let message1 = Message {
+            header: MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 2, // 2 > 1
+                num_readonly_unsigned_accounts: 0,
+            },
+            account_keys: vec![key0],
+            recent_blockhash: Hash::default(),
+            instructions: vec![],
+        };
+        assert!(!message1.is_writable_index(0));
+
+        // Matching issue #150 PoC 2 - num_readonly_unsigned_accounts > account_keys.len()
+        let key_for_poc2 = Pubkey::new_unique();
+        let message2 = Message {
+            header: MessageHeader {
+                num_required_signatures: 0,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 2, // 2 > account_keys.len() (1)
+            },
+            account_keys: vec![key_for_poc2],
+            recent_blockhash: Hash::default(),
+            instructions: vec![],
+        };
+        assert!(!message2.is_writable_index(0));
+
+        // Scenario 3: num_readonly_unsigned_accounts > account_keys.len() with writable signed account
+        // This should result in the first condition being true for the signed account
+        let message3 = Message {
+            header: MessageHeader {
+                num_required_signatures: 1, // Writable range starts before index 1
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 2, // 2 > account_keys.len() (1)
+            },
+            account_keys: vec![key0],
+            recent_blockhash: Hash::default(),
+            instructions: vec![],
+        };
+        assert!(message3.is_writable_index(0));
+
+        // Scenario 4: Both conditions, and testing an index that would rely on the second part of OR
+        let key1 = Pubkey::new_unique();
+        let message4 = Message {
+            header: MessageHeader {
+                num_required_signatures: 1, // Writable range starts before index 1 for signed accounts
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 3, // 3 > account_keys.len() (2)
+            },
+            account_keys: vec![key0, key1],
+            recent_blockhash: Hash::default(),
+            instructions: vec![],
+        };
+        assert!(message4.is_writable_index(0));
+        assert!(!message4.is_writable_index(1));
+
+        // Scenario 5: num_required_signatures is 0 due to saturating_sub
+        // and num_readonly_unsigned_accounts makes the second range empty
+        let message5 = Message {
+            header: MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 2, // 1.saturating_sub(2) = 0
+                num_readonly_unsigned_accounts: 3, // account_keys.len().saturating_sub(3) potentially 0
+            },
+            account_keys: vec![key0, key1], // len is 2
+            recent_blockhash: Hash::default(),
+            instructions: vec![],
+        };
+        assert!(!message5.is_writable_index(0));
+        assert!(!message5.is_writable_index(1));
     }
 }

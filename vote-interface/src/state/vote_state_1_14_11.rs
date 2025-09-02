@@ -7,7 +7,7 @@ const DEFAULT_PRIOR_VOTERS_OFFSET: usize = 82;
 
 #[cfg_attr(
     feature = "frozen-abi",
-    solana_frozen_abi_macro::frozen_abi(digest = "HF4NfshaLg9e93RURYWTJRowtRrpLf5mWiF4G2Gnfu2r"),
+    solana_frozen_abi_macro::frozen_abi(digest = "2rjXSWaNeAdoUNJDC5otC7NPR1qXHvLMuAs5faE4DPEt"),
     derive(solana_frozen_abi_macro::AbiExample)
 )]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
@@ -64,8 +64,8 @@ impl VoteState1_14_11 {
     }
 }
 
-impl From<VoteState> for VoteState1_14_11 {
-    fn from(vote_state: VoteState) -> Self {
+impl From<VoteStateV3> for VoteState1_14_11 {
+    fn from(vote_state: VoteStateV3) -> Self {
         Self {
             node_pubkey: vote_state.node_pubkey,
             authorized_withdrawer: vote_state.authorized_withdrawer,
@@ -95,12 +95,34 @@ mod tests {
         let target_vote_state_versions = VoteStateVersions::V1_14_11(Box::new(target_vote_state));
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
 
-        let mut test_vote_state = MaybeUninit::uninit();
-        VoteState::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state).unwrap();
-        let test_vote_state = unsafe { test_vote_state.assume_init() };
+        // v3
+        let mut test_vote_state_v3 = MaybeUninit::uninit();
+        VoteStateV3::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state_v3).unwrap();
+        let test_vote_state = unsafe { test_vote_state_v3.assume_init() };
 
         assert_eq!(
-            target_vote_state_versions.convert_to_current(),
+            target_vote_state_versions
+                .clone()
+                .try_convert_to_v3()
+                .unwrap(),
+            test_vote_state
+        );
+
+        // v4
+        let vote_pubkey = Pubkey::new_unique();
+        let mut test_vote_state_v4 = MaybeUninit::uninit();
+        VoteStateV4::deserialize_into_uninit(
+            &vote_state_buf,
+            &mut test_vote_state_v4,
+            &vote_pubkey,
+        )
+        .unwrap();
+        let test_vote_state = unsafe { test_vote_state_v4.assume_init() };
+
+        assert_eq!(
+            target_vote_state_versions
+                .try_convert_to_v4(&vote_pubkey)
+                .unwrap(),
             test_vote_state
         );
 
@@ -115,14 +137,35 @@ mod tests {
             let target_vote_state_versions =
                 VoteStateVersions::V1_14_11(Box::new(arbitrary_vote_state));
 
+            // v3
             let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
-            let target_vote_state = target_vote_state_versions.convert_to_current();
+            let target_vote_state_v3 = target_vote_state_versions
+                .clone()
+                .try_convert_to_v3()
+                .unwrap();
 
-            let mut test_vote_state = MaybeUninit::uninit();
-            VoteState::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state).unwrap();
-            let test_vote_state = unsafe { test_vote_state.assume_init() };
+            let mut test_vote_state_v3 = MaybeUninit::uninit();
+            VoteStateV3::deserialize_into_uninit(&vote_state_buf, &mut test_vote_state_v3).unwrap();
+            let test_vote_state = unsafe { test_vote_state_v3.assume_init() };
 
-            assert_eq!(target_vote_state, test_vote_state);
+            assert_eq!(target_vote_state_v3, test_vote_state);
+
+            // v4
+            let vote_pubkey = Pubkey::new_unique();
+            let target_vote_state_v4 = target_vote_state_versions
+                .try_convert_to_v4(&vote_pubkey)
+                .unwrap();
+
+            let mut test_vote_state_v4 = MaybeUninit::uninit();
+            VoteStateV4::deserialize_into_uninit(
+                &vote_state_buf,
+                &mut test_vote_state_v4,
+                &vote_pubkey,
+            )
+            .unwrap();
+            let test_vote_state = unsafe { test_vote_state_v4.assume_init() };
+
+            assert_eq!(target_vote_state_v4, test_vote_state);
         }
     }
 }
