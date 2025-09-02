@@ -577,8 +577,7 @@ impl<T: Serialize + TransparentAsHelper + EvenAsOpaque> AbiEnumVisitor for &T {
         let type_name = type_name::<T>();
         let matcher = T::TYPE_NAME_MATCHER;
         info!(
-            "AbiEnumVisitor for (EvenAsOpaque): {}: matcher: {}",
-            type_name, matcher
+            "AbiEnumVisitor for (EvenAsOpaque): {type_name}: matcher: {matcher}",
         );
         self.serialize(digester.create_new_opaque(matcher))
             .map_err(DigestError::wrap_by_type::<T>)

@@ -114,7 +114,7 @@ pub fn download_file<'a, 'b>(
         );
         progress_bar.set_message(format!("{TRUCK}Downloading~ {url}"));
     } else {
-        info!("Downloading {} bytes from {}", download_size, url);
+        info!("Downloading {download_size} bytes from {url}");
     }
 
     struct DownloadProgress<'e, 'f, R> {
@@ -206,14 +206,8 @@ pub fn download_file<'a, 'b>(
 
     source.progress_bar.finish_and_clear();
     info!(
-        "  {}{}",
-        SPARKLE,
-        format!(
-            "Downloaded {} ({} bytes) in {:?}",
-            url,
-            download_size,
-            Instant::now().duration_since(download_start),
-        )
+        "  {SPARKLE}Downloaded {url} ({download_size} bytes) in {:?}",
+        Instant::now().duration_since(download_start),
     );
 
     std::fs::rename(temp_destination_file, destination_file)

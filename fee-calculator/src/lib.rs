@@ -116,8 +116,7 @@ impl FeeRateGovernor {
                     ));
 
             trace!(
-                "desired_lamports_per_signature: {}",
-                desired_lamports_per_signature
+                "desired_lamports_per_signature: {desired_lamports_per_signature}",
             );
 
             let gap = desired_lamports_per_signature as i64
@@ -132,9 +131,7 @@ impl FeeRateGovernor {
                     core::cmp::max(1, me.target_lamports_per_signature / 20) as i64 * gap.signum();
 
                 trace!(
-                    "lamports_per_signature gap is {}, adjusting by {}",
-                    gap,
-                    gap_adjust
+                    "lamports_per_signature gap is {gap}, adjusting by {gap_adjust}",
                 );
 
                 me.lamports_per_signature =
